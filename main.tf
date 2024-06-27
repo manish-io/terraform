@@ -16,7 +16,17 @@ resource "aws_subnet" "main" {
   availability_zone = "us-east-1a"
 
   tags = {
-    Name = "main-subnet"
+    Name = "main-subnet-1"
+  }
+}
+
+resource "aws_subnet" "secondary" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.2.0/24"
+  availability_zone = "us-east-1b"
+
+  tags = {
+    Name = "main-subnet-2"
   }
 }
 
@@ -43,6 +53,11 @@ resource "aws_route_table" "main" {
 
 resource "aws_route_table_association" "main" {
   subnet_id      = aws_subnet.main.id
+  route_table_id = aws_route_table.main.id
+}
+
+resource "aws_route_table_association" "secondary" {
+  subnet_id      = aws_subnet.secondary.id
   route_table_id = aws_route_table.main.id
 }
 
@@ -79,28 +94,29 @@ resource "aws_instance" "web" {
   ami           = "ami-0ac80df6eff0e70b5"
   instance_type = "t2.micro"
   subnet_id     = aws_subnet.main.id
-  security_groups = [aws_security_group.instance.name]
+  vpc_security_group_ids = [aws_security_group.instance.id]
 
   user_data = <<-EOF
               #!/bin/bash
-              sudo apt update -y
-              sudo apt install -y nginx
-              sudo systemctl start nginx
-              sudo systemctl enable nginx
-              sudo apt install -y ec2-instance-connect
-              echo "<html><head><title>Manish Chauhan</title></head><body><h1>Welcome to my Webpage </h1></body></html>" > /usr/share/nginx/html/index.html
+              yum update -y
+              yum install -y nginx
+              systemctl start nginx
+              systemctl enable nginx
+              amazon-linux-extras install -y ec2-instance-connect
+              echo "<html><head><title>Manish</title></head><body><h1>Welcome to my Webpage.</h1></body></html>" > /usr/share/nginx/html/index.html
               EOF
 
   tags = {
     Name = "web-instance"
   }
 }
+
 resource "aws_lb" "alb" {
   name               = "main-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.instance.id]
-  subnets            = [aws_subnet.main.id]
+  subnets            = [aws_subnet.main.id, aws_subnet.secondary.id]
 
   enable_deletion_protection = false
 
@@ -144,4 +160,20 @@ resource "aws_lb_target_group_attachment" "web" {
   target_group_arn = aws_lb_target_group.tg.arn
   target_id        = aws_instance.web.id
   port             = 80
+}
+
+output "vpc_id" {
+  value = aws_vpc.main.id
+}
+
+output "subnet_id" {
+  value = aws_subnet.main.id
+}
+
+output "instance_id" {
+  value = aws_instance.web.id
+}
+
+output "alb_dns_name" {
+  value = aws_lb.alb.dns_name
 }
