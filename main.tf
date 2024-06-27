@@ -13,7 +13,7 @@ resource "aws_vpc" "main" {
 resource "aws_subnet" "main" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.1.0/24"
-  availability_zone = "us-east-1a"
+  map_public_ip_on_launch = true
 
   tags = {
     Name = "main-subnet-1"
@@ -23,7 +23,7 @@ resource "aws_subnet" "main" {
 resource "aws_subnet" "secondary" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.2.0/24"
-  availability_zone = "us-east-1b"
+  map_public_ip_on_launch = true
 
   tags = {
     Name = "main-subnet-2"
@@ -91,10 +91,11 @@ resource "aws_security_group" "instance" {
 }
 
 resource "aws_instance" "web" {
-  ami           = "ami-0ac80df6eff0e70b5"
-  instance_type = "t2.micro"
-  subnet_id     = aws_subnet.main.id
+  ami                    = "ami-0ac80df6eff0e70b5"
+  instance_type          = "t2.micro"
+  subnet_id              = aws_subnet.main.id
   vpc_security_group_ids = [aws_security_group.instance.id]
+
   associate_public_ip_address = true
 
   user_data = <<-EOF
@@ -104,7 +105,6 @@ resource "aws_instance" "web" {
               sudo systemctl start nginx
               sudo systemctl enable nginx
               sudo apt install -y ec2-instance-connect
-              echo "<html><head><title>Manish</title></head><body><h1>Welcome to my Webpage.</h1></body></html>" > /usr/share/nginx/html/index.html
               EOF
 
   tags = {
