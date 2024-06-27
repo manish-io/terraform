@@ -98,11 +98,11 @@ resource "aws_instance" "web" {
 
   user_data = <<-EOF
               #!/bin/bash
-              yum update -y
-              yum install -y nginx
-              systemctl start nginx
-              systemctl enable nginx
-              amazon-linux-extras install -y ec2-instance-connect
+              sudo apt update -y
+              sudo apt install -y nginx
+              sudo systemctl start nginx
+              sudo systemctl enable nginx
+              sudo apt install -y ec2-instance-connect
               echo "<html><head><title>Manish</title></head><body><h1>Welcome to my Webpage.</h1></body></html>" > /usr/share/nginx/html/index.html
               EOF
 
