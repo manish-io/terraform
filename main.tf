@@ -2,65 +2,113 @@ provider "aws" {
   region = "us-east-1"
 }
 
-resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
+# Initialize availability zone data from AWS
+data "aws_availability_zones" "available" {}
+
+# VPC resource
+resource "aws_vpc" "myVpc" {
+  cidr_block           = "10.20.0.0/16"
+  enable_dns_hostnames = true
 
   tags = {
-    Name = "main-vpc"
+    Name = "myVpc"
   }
 }
 
-resource "aws_subnet" "main" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.1.0/24"
+# Internet gateway for the public subnets
+resource "aws_internet_gateway" "myInternetGateway" {
+  vpc_id = aws_vpc.myVpc.id
 
   tags = {
-    Name = "main-subnet-1"
+    Name = "myInternetGateway"
   }
 }
 
-resource "aws_subnet" "secondary" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.2.0/24"
+# Public Subnets
+resource "aws_subnet" "public_subnet" {
+  count                   = length(data.aws_availability_zones.available.names)
+  vpc_id                  = aws_vpc.myVpc.id
+  cidr_block              = "10.20.${10 + count.index}.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
 
   tags = {
-    Name = "main-subnet-2"
+    Name = "PublicSubnet-${count.index}"
   }
 }
 
-resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id
+# Private Subnets
+resource "aws_subnet" "private_subnet" {
+  count                   = length(data.aws_availability_zones.available.names)
+  vpc_id                  = aws_vpc.myVpc.id
+  cidr_block              = "10.20.${20 + count.index}.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = false
 
   tags = {
-    Name = "main-igw"
+    Name = "PrivateSubnet-${count.index}"
   }
 }
 
-resource "aws_route_table" "main" {
-  vpc_id = aws_vpc.main.id
+# Routing table for public subnets
+resource "aws_route_table" "rtblPublic" {
+  vpc_id = aws_vpc.myVpc.id
 
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.main.id
+    gateway_id = aws_internet_gateway.myInternetGateway.id
   }
 
   tags = {
-    Name = "main-route-table"
+    Name = "rtblPublic"
   }
 }
 
-resource "aws_route_table_association" "main" {
-  subnet_id      = aws_subnet.main.id
-  route_table_id = aws_route_table.main.id
+# Route table association for public subnets
+resource "aws_route_table_association" "route" {
+  count          = length(data.aws_availability_zones.available.names)
+  subnet_id      = aws_subnet.public_subnet[count.index].id
+  route_table_id = aws_route_table.rtblPublic.id
 }
 
-resource "aws_route_table_association" "secondary" {
-  subnet_id      = aws_subnet.secondary.id
-  route_table_id = aws_route_table.main.id
+# Elastic IP for NAT gateway
+resource "aws_eip" "nat" {
+  vpc = true
 }
 
+# NAT Gateway
+resource "aws_nat_gateway" "nat-gw" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public_subnet[0].id  
+
+  depends_on = [
+    aws_internet_gateway.myInternetGateway,
+  ]
+}
+
+# Routing table for private subnets
+resource "aws_route_table" "rtblPrivate" {
+  vpc_id = aws_vpc.myVpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat-gw.id
+  }
+
+  tags = {
+    Name = "rtblPrivate"
+  }
+}
+
+# Route table association for private subnets
+resource "aws_route_table_association" "private_route" {
+  count          = length(data.aws_availability_zones.available.names)
+  subnet_id      = aws_subnet.private_subnet[count.index].id
+  route_table_id = aws_route_table.rtblPrivate.id
+}
+# Security Group for EC2 instance
 resource "aws_security_group" "instance" {
-  vpc_id = aws_vpc.main.id
+  vpc_id = aws_vpc.myVpc.id
 
   ingress {
     from_port   = 80
@@ -88,12 +136,12 @@ resource "aws_security_group" "instance" {
   }
 }
 
+# EC2 Instance
 resource "aws_instance" "web" {
-  ami                    = "ami-0ac80df6eff0e70b5"
+  ami                    = "ami-0ac80df6eff0e70b5"  
   instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.main.id
+  subnet_id              = aws_subnet.public_subnet[0].id  
   vpc_security_group_ids = [aws_security_group.instance.id]
-
   associate_public_ip_address = true
 
   user_data = <<-EOF
@@ -109,13 +157,13 @@ resource "aws_instance" "web" {
     Name = "web-instance"
   }
 }
-
+# ALB
 resource "aws_lb" "alb" {
   name               = "main-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.instance.id]
-  subnets            = [aws_subnet.main.id, aws_subnet.secondary.id]
+  subnets            = [aws_subnet.public_subnet[0].id, aws_subnet.public_subnet[1].id] 
 
   enable_deletion_protection = false
 
@@ -124,11 +172,12 @@ resource "aws_lb" "alb" {
   }
 }
 
+# Target Group
 resource "aws_lb_target_group" "tg" {
   name     = "main-tg"
   port     = 80
   protocol = "HTTP"
-  vpc_id   = aws_vpc.main.id
+  vpc_id   = aws_vpc.myVpc.id
 
   health_check {
     path                = "/"
@@ -144,6 +193,7 @@ resource "aws_lb_target_group" "tg" {
   }
 }
 
+# ALB Listener
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.alb.arn
   port              = "80"
@@ -155,6 +205,7 @@ resource "aws_lb_listener" "http" {
   }
 }
 
+# Target Group Attachment
 resource "aws_lb_target_group_attachment" "web" {
   target_group_arn = aws_lb_target_group.tg.arn
   target_id        = aws_instance.web.id
@@ -162,11 +213,11 @@ resource "aws_lb_target_group_attachment" "web" {
 }
 
 output "vpc_id" {
-  value = aws_vpc.main.id
+  value = aws_vpc.myVpc.id
 }
 
-output "subnet_id" {
-  value = aws_subnet.main.id
+output "subnet_ids" {
+  value = concat(aws_subnet.public_subnet[*].id, aws_subnet.private_subnet[*].id)
 }
 
 output "instance_id" {
